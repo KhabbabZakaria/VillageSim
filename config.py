@@ -54,7 +54,7 @@ TROLL_RETURN_EARLY  =  5.0   # seconds before dawn trolls go back home
 TROLL_COUNT          = 5
 TROLL_SPEED          = 1.6     # slightly faster than villagers
 TROLL_ATTACK_RANGE   = 80.0    # pixels — proximity that triggers damage
-TROLL_ATTACK_DRAIN   = 20.0    # extra hp/second lost near a troll
+TROLL_ATTACK_DRAIN   = 12.0    # extra hp/second lost near a troll
 TROLL_TARGET_DUR_MIN = 4.0     # sim-seconds per roam waypoint
 TROLL_TARGET_DUR_MAX = 10.0
 # Mountain home positions (x, y) — spread across the bottom mountain strip
