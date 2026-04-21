@@ -44,8 +44,10 @@ FARM_HEALTH_DRAIN    = 0.1  # hp/second lost while farming (exertion)
 HUNT_HEALTH_DRAIN    = 3.5  # hp/second lost while hunting (danger + exertion)
 
 # ── Day / Night cycle (real-time seconds) ────────────────────────────────────
-DAY_DURATION        = 60.0   # real seconds of daylight
+DAY_DURATION        = 40.0   # real seconds of daylight
 NIGHT_DURATION      = 30.0   # real seconds of night
+TWILIGHT_DURATION   = 10.0   # real seconds before night — danger ramps up, head home
+DAWN_DURATION       = 10.0   # real seconds after night — trolls retreating, safe to farm
 NIGHT_FADE          =  4.0   # real seconds for fade at each transition
 TROLL_EMERGE_DELAY  =  5.0   # seconds into night before trolls come out
 TROLL_RETURN_EARLY  =  5.0   # seconds before dawn trolls go back home
