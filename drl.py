@@ -70,6 +70,15 @@ class ReplayBuffer:
         indices = np.random.choice(len(self._buf), size=n, replace=False)
         return [self._buf[i] for i in indices]
 
+    def sample_recent_random(self, n: int, window: int) -> List[dict]:
+        """Randomly sample *n* transitions from only the most recent *window* entries."""
+        recent = self._buf[-window:] if len(self._buf) > window else self._buf
+        n = min(n, len(recent))
+        if n == 0:
+            return []
+        indices = np.random.choice(len(recent), size=n, replace=False)
+        return [recent[i] for i in indices]
+
     def seed(self, transitions: List[dict]) -> None:
         """Pre-populate buffer with knowledge-transferred transitions."""
         for t in transitions:
@@ -137,7 +146,12 @@ class ActorCritic:
         exp    = np.exp(logits)
         probs  = exp / exp.sum()
 
+        if not np.isfinite(probs).all():
+            probs = np.full(self.as_, 1.0 / self.as_, dtype=np.float32)
+
         value = float((self.W2c @ hidden + self.b2c)[0])
+        if not np.isfinite(value):
+            value = 0.0
         return probs, value, hidden
 
     # ── action selection ──────────────────────────────────────────────────────

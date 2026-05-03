@@ -44,8 +44,10 @@ FARM_HEALTH_DRAIN    = 0.1  # hp/second lost while farming (exertion)
 HUNT_HEALTH_DRAIN    = 3.5  # hp/second lost while hunting (danger + exertion)
 
 # ── Day / Night cycle (real-time seconds) ────────────────────────────────────
-DAY_DURATION        = 60.0   # real seconds of daylight
+DAY_DURATION        = 40.0   # real seconds of daylight
 NIGHT_DURATION      = 30.0   # real seconds of night
+TWILIGHT_DURATION   = 10.0   # real seconds before night — danger ramps up, head home
+DAWN_DURATION       = 10.0   # real seconds after night — trolls retreating, safe to farm
 NIGHT_FADE          =  4.0   # real seconds for fade at each transition
 TROLL_EMERGE_DELAY  =  5.0   # seconds into night before trolls come out
 TROLL_RETURN_EARLY  =  5.0   # seconds before dawn trolls go back home
@@ -62,6 +64,16 @@ TROLL_HOMES = [
     (105, 665), (228, 672), (402, 659), (578, 668), (722, 673),
 ]
 
+# ── LLM Collective Memory ─────────────────────────────────────────────────────
+WITNESS_RANGE             = 150.0  # pixels — range for witnessing events
+HP_DROP_THRESHOLD         = 25.0   # HP lost in snapshot window to log as event
+HP_GAIN_THRESHOLD         = 20.0   # HP gained in snapshot window to log as positive event
+HP_SNAPSHOT_INTERVAL      = 5.0    # sim-seconds between HP snapshots
+DISCUSSION_INTERVAL       = 90.0   # real-seconds between discussion phases
+DISCUSSION_TIMEOUT        = 12.0   # real-seconds to wait for LLM before resuming
+LLM_TRANSITIONS_PER_LESSON = 15   # synthetic transitions generated per action per lesson
+LLM_MAX_SYNTHETIC_FRAC     = 0.40  # max fraction of replay buffer that synthetic may occupy
+
 # ── Hunger ────────────────────────────────────────────────────────────────────
 HUNGER_THRESHOLD   = 120.0  # sim-seconds without eating before hunger kicks in (~30 real-sec at 4x)
 HUNGER_DRAIN       = 3.5    # extra hp/second lost while hungry
@@ -75,7 +87,7 @@ SEX_RISK_PENALTY   = 8.0
 
 # Penalty injected into the replay buffer when a villager dies before old age.
 # A large negative value trains the agent to avoid the action that led to death.
-PREMATURE_DEATH_PENALTY = -60.0
+PREMATURE_DEATH_PENALTY = -10.0
 
 # Hard cap on simultaneous villagers.
 # Reproduction is suppressed when alive count >= this value.
@@ -94,6 +106,7 @@ AC_MUTATION_STD  = 0.08     # std of gaussian noise on mutated weights
 AC_INHERIT_MEM   = 20       # memories inherited from each parent
 AC_INHERIT_SPECIES   = 30   # memories drawn from species pool at birth
 AC_SPECIES_POOL_SIZE = 2000 # capacity of the collective species experience pool
+AC_SPECIES_RECENT_WINDOW = 400  # only sample from this many most-recent pool entries
 
 AC_TRAIN_DURATION = 60.0    # sim-seconds in training phase
 AC_TEST_DURATION  = 30.0    # sim-seconds in testing phase

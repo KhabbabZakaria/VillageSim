@@ -508,6 +508,8 @@ class Renderer:
         self._draw_night_overlay(night_alpha)
         self._draw_trolls(world, night_alpha)
         self._draw_day_night_indicator(night_alpha)
+        self._draw_speech_bubbles(world)
+        self._draw_discussion_banner(world)
         self._draw_hud(world)
         self._draw_panel(world)
         if world.selected_uid is not None:
@@ -777,6 +779,32 @@ class Renderer:
 
         # outline
         pygame.draw.rect(self.screen, (0, 0, 0), (x, y, bar_w, bar_h), 1, border_radius=2)
+
+    # ── LLM speech bubbles ────────────────────────────────────────────────────
+
+    def _draw_speech_bubbles(self, world: "World") -> None:
+        for v in world.alive():
+            if not v.bubble_text:
+                continue
+            text_surf = self.f_small.render(v.bubble_text, True, (240, 230, 170))
+            tw, th = text_surf.get_size()
+            bx = int(v.x) - tw // 2 - 5
+            by = int(v.y) - 38 - th
+            bx = max(2, min(bx, self.px - tw - 12))
+            by = max(2, by)
+            pygame.draw.rect(self.screen, (35, 28, 12), (bx, by, tw + 10, th + 6), border_radius=4)
+            pygame.draw.rect(self.screen, (180, 155, 80), (bx, by, tw + 10, th + 6), 1, border_radius=4)
+            self.screen.blit(text_surf, (bx + 5, by + 3))
+
+    def _draw_discussion_banner(self, world: "World") -> None:
+        if not world.discussion_active:
+            return
+        bw, bh = self.px, 26
+        surf = pygame.Surface((bw, bh), pygame.SRCALPHA)
+        surf.fill((15, 10, 5, 200))
+        self.screen.blit(surf, (0, self.H // 2 - bh // 2))
+        label = self.f_head.render("⬤  Villagers discussing...  waiting for wisdom", True, (220, 195, 90))
+        self.screen.blit(label, (bw // 2 - label.get_width() // 2, self.H // 2 - label.get_height() // 2))
 
     # ── HUD ───────────────────────────────────────────────────────────────────
 

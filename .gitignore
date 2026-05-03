@@ -1,3 +1,5 @@
 venv
 .claude
 __pycache__
+.env
+llm_log.txt
