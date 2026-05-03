@@ -43,14 +43,15 @@ PASSIVE_HEALTH_DRAIN = 0.8  # hp/second always draining (aging/hunger)
 FARM_HEALTH_DRAIN    = 0.1  # hp/second lost while farming (exertion)
 HUNT_HEALTH_DRAIN    = 3.5  # hp/second lost while hunting (danger + exertion)
 
-# ── Day / Night cycle (real-time seconds) ────────────────────────────────────
-DAY_DURATION        = 40.0   # real seconds of daylight
-NIGHT_DURATION      = 30.0   # real seconds of night
-TWILIGHT_DURATION   = 10.0   # real seconds before night — danger ramps up, head home
-DAWN_DURATION       = 10.0   # real seconds after night — trolls retreating, safe to farm
-NIGHT_FADE          =  4.0   # real seconds for fade at each transition
-TROLL_EMERGE_DELAY  =  5.0   # seconds into night before trolls come out
-TROLL_RETURN_EARLY  =  5.0   # seconds before dawn trolls go back home
+# ── Day / Night cycle (sim-seconds — scales with World.speed) ────────────────
+# At default speed (SIM_SPEED_DEFAULT=4) divide by 4 to get real-world seconds.
+DAY_DURATION        = 160.0  # sim-seconds of daylight    (≈40 real-s at 4×)
+NIGHT_DURATION      = 120.0  # sim-seconds of night       (≈30 real-s at 4×)
+TWILIGHT_DURATION   =  40.0  # sim-seconds of twilight    (≈10 real-s at 4×)
+DAWN_DURATION       =  40.0  # sim-seconds of dawn        (≈10 real-s at 4×)
+NIGHT_FADE          =  16.0  # sim-seconds fade per transition (≈4 real-s at 4×)
+TROLL_EMERGE_DELAY  =  20.0  # sim-seconds into night before trolls emerge
+TROLL_RETURN_EARLY  =  20.0  # sim-seconds before dawn trolls go home
 
 # ── Trolls ────────────────────────────────────────────────────────────────────
 TROLL_COUNT          = 5

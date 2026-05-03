@@ -298,7 +298,7 @@ class World:
 
     def _time_of_day(self) -> str:
         period = cfg.DAY_DURATION + cfg.NIGHT_DURATION
-        phase  = self.real_time % period
+        phase  = self.sim_time % period
         if phase >= cfg.DAY_DURATION:
             return "night"
         elif phase >= cfg.DAY_DURATION - cfg.TWILIGHT_DURATION:
@@ -310,7 +310,7 @@ class World:
     def _night_danger(self) -> float:
         """Continuous 0.0–1.0 danger: ramps up during twilight, down during dawn."""
         period = cfg.DAY_DURATION + cfg.NIGHT_DURATION
-        phase  = self.real_time % period
+        phase  = self.sim_time % period
         if phase >= cfg.DAY_DURATION:
             return 1.0
         elif phase >= cfg.DAY_DURATION - cfg.TWILIGHT_DURATION:
@@ -442,8 +442,9 @@ class World:
             if parent:
                 v.health = min(100.0, v.health + dt * cfg.PARENT_FEED_RATE)
 
-        # Reproduction (male initiates proximity check)
-        if v.is_adult and v.gender == "M" and v.sex_cooldown <= 0:
+        # Reproduction (male initiates proximity check) — suppressed at population cap
+        if (v.is_adult and v.gender == "M" and v.sex_cooldown <= 0
+                and len(alive) < cfg.MAX_VILLAGERS):
             for f in alive:
                 if (f.is_adult and f.gender == "F"
                         and f.sex_cooldown <= 0
@@ -454,8 +455,8 @@ class World:
     # ── troll update ──────────────────────────────────────────────────────────
 
     def _update_trolls(self, dt: float, alive: List[Villager]) -> None:
-        period     = cfg.DAY_DURATION + cfg.NIGHT_DURATION   # 90 s
-        phase      = self.real_time % period
+        period     = cfg.DAY_DURATION + cfg.NIGHT_DURATION
+        phase      = self.sim_time % period
         out_start  = cfg.DAY_DURATION + cfg.TROLL_EMERGE_DELAY   # 65 s
         out_end    = period - cfg.TROLL_RETURN_EARLY              # 85 s
         is_out     = out_start <= phase < out_end
@@ -573,7 +574,8 @@ class World:
                 v.health = min(100.0, v.health + dt * cfg.VILLAGE_HEALTH_REGEN)
             v.risk   = max(0.0, v.risk - dt * cfg.REST_RISK_DRAIN)
             # Village reward rises with danger — strongest at full night
-            v.instant_reward = cfg.REST_REWARD * (0.4 + 3.1 * danger)
+            village_mult = 0.2 if is_hungry else 1.0
+            v.instant_reward = cfg.REST_REWARD * (0.4 + 3.1 * danger) * village_mult
             v.hunger_eat_timer = 0.0
 
         else:   # wild
@@ -589,7 +591,7 @@ class World:
 
         # Universal hunger penalty
         if is_hungry:
-            v.instant_reward -= 1.0
+            v.instant_reward -= (1.0 + 2.0 * danger)
 
         # Small survival bonus every tick — living longer is intrinsically rewarded
         v.instant_reward += 0.15
