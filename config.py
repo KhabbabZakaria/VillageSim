@@ -43,14 +43,16 @@ PASSIVE_HEALTH_DRAIN = 0.8  # hp/second always draining (aging/hunger)
 FARM_HEALTH_DRAIN    = 0.1  # hp/second lost while farming (exertion)
 HUNT_HEALTH_DRAIN    = 3.5  # hp/second lost while hunting (danger + exertion)
 
-# ── Day / Night cycle (real-time seconds) ────────────────────────────────────
-DAY_DURATION        = 40.0   # real seconds of daylight
-NIGHT_DURATION      = 30.0   # real seconds of night
-TWILIGHT_DURATION   = 10.0   # real seconds before night — danger ramps up, head home
-DAWN_DURATION       = 10.0   # real seconds after night — trolls retreating, safe to farm
-NIGHT_FADE          =  4.0   # real seconds for fade at each transition
-TROLL_EMERGE_DELAY  =  5.0   # seconds into night before trolls come out
-TROLL_RETURN_EARLY  =  5.0   # seconds before dawn trolls go back home
+# ── Day / Night cycle (sim-seconds — scales with World.speed) ────────────────
+# Values are in sim-seconds so the cycle length stays proportional to speed.
+# At Normal speed (SIM_SPEED_DEFAULT=4) divide by 4 to get real-world seconds.
+DAY_DURATION        = 160.0  # sim-seconds of daylight    (≈40 real-s at 4×)
+NIGHT_DURATION      = 120.0  # sim-seconds of night       (≈30 real-s at 4×)
+TWILIGHT_DURATION   =  40.0  # sim-seconds of twilight    (≈10 real-s at 4×)
+DAWN_DURATION       =  40.0  # sim-seconds of dawn        (≈10 real-s at 4×)
+NIGHT_FADE          =  16.0  # sim-seconds fade per transition (≈4 real-s at 4×)
+TROLL_EMERGE_DELAY  =  20.0  # sim-seconds into night before trolls emerge
+TROLL_RETURN_EARLY  =  20.0  # sim-seconds before dawn trolls go home
 
 # ── Trolls ────────────────────────────────────────────────────────────────────
 TROLL_COUNT          = 5
@@ -69,8 +71,8 @@ WITNESS_RANGE             = 150.0  # pixels — range for witnessing events
 HP_DROP_THRESHOLD         = 25.0   # HP lost in snapshot window to log as event
 HP_GAIN_THRESHOLD         = 20.0   # HP gained in snapshot window to log as positive event
 HP_SNAPSHOT_INTERVAL      = 5.0    # sim-seconds between HP snapshots
-DISCUSSION_INTERVAL       = 90.0   # real-seconds between discussion phases
-DISCUSSION_TIMEOUT        = 12.0   # real-seconds to wait for LLM before resuming
+DISCUSSION_INTERVAL       = 360.0  # sim-seconds between discussions (≈90 real-s at 4×)
+DISCUSSION_TIMEOUT        = 12.0   # real-seconds to wait for LLM (stays wall-clock)
 LLM_TRANSITIONS_PER_LESSON = 15   # synthetic transitions generated per action per lesson
 LLM_MAX_SYNTHETIC_FRAC     = 0.40  # max fraction of replay buffer that synthetic may occupy
 

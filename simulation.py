@@ -323,7 +323,7 @@ class World:
 
     def _time_of_day(self) -> str:
         period = cfg.DAY_DURATION + cfg.NIGHT_DURATION
-        phase  = self.real_time % period
+        phase  = self.sim_time % period
         if phase >= cfg.DAY_DURATION:
             return "night"
         elif phase >= cfg.DAY_DURATION - cfg.TWILIGHT_DURATION:
@@ -335,7 +335,7 @@ class World:
     def _night_danger(self) -> float:
         """Continuous 0.0–1.0 danger level: ramps up during twilight, down during dawn."""
         period = cfg.DAY_DURATION + cfg.NIGHT_DURATION
-        phase  = self.real_time % period
+        phase  = self.sim_time % period
         if phase >= cfg.DAY_DURATION:
             return 1.0
         elif phase >= cfg.DAY_DURATION - cfg.TWILIGHT_DURATION:
@@ -353,6 +353,25 @@ class World:
         self.real_time += real_dt
         dt = real_dt * self.speed
 
+        # ── discussion resolution (always checked; timeout uses wall-clock) ──
+        if self.discussion_active:
+            self.discussion_pause += real_dt
+            with self._lesson_lock:
+                lessons_ready = len(self.pending_lessons) > 0
+            if lessons_ready or self.discussion_pause >= cfg.DISCUSSION_TIMEOUT:
+                with self._lesson_lock:
+                    lessons = self.pending_lessons[:]
+                    self.pending_lessons.clear()
+                alive = self.alive()
+                self._apply_lessons(lessons, alive)
+                self.last_lessons = lessons
+                self.discussion_active = False
+                for v in alive:
+                    v.bubble_timer = 0.0
+            else:
+                return  # freeze: sim_time and all physics don't advance
+
+        # ── physics (only runs when not in discussion) ────────────────────────
         self.sim_time += dt
         alive = self.alive()
 
@@ -372,25 +391,11 @@ class World:
 
         self._update_trolls(dt, alive)
 
-        # LLM discussion phase
-        if not self.discussion_active:
-            self.discussion_timer += real_dt
-            if self.discussion_timer >= cfg.DISCUSSION_INTERVAL:
-                self.discussion_timer = 0.0
-                self._start_discussion(alive)
-        else:
-            self.discussion_pause += real_dt
-            with self._lesson_lock:
-                lessons_ready = len(self.pending_lessons) > 0
-            if lessons_ready or self.discussion_pause >= cfg.DISCUSSION_TIMEOUT:
-                with self._lesson_lock:
-                    lessons = self.pending_lessons[:]
-                    self.pending_lessons.clear()
-                self._apply_lessons(lessons, alive)
-                self.last_lessons = lessons
-                self.discussion_active = False
-                for v in alive:
-                    v.bubble_timer = 0.0
+        # discussion trigger (sim-time so it scales with speed)
+        self.discussion_timer += dt
+        if self.discussion_timer >= cfg.DISCUSSION_INTERVAL:
+            self.discussion_timer = 0.0
+            self._start_discussion(alive)
 
         # Repopulation guard — maintain at least one adult of each gender
         for gender in ("M", "F"):
@@ -539,8 +544,8 @@ class World:
     def _update_trolls(self, dt: float, alive: List[Villager]) -> None:
         if self.discussion_active:
             return
-        period     = cfg.DAY_DURATION + cfg.NIGHT_DURATION   # 90 s
-        phase      = self.real_time % period
+        period     = cfg.DAY_DURATION + cfg.NIGHT_DURATION
+        phase      = self.sim_time % period
         out_start  = cfg.DAY_DURATION + cfg.TROLL_EMERGE_DELAY   # 65 s
         out_end    = period - cfg.TROLL_RETURN_EARLY              # 85 s
         is_out     = out_start <= phase < out_end
@@ -795,7 +800,7 @@ class World:
         """Return a short list of strings describing what is near villager v."""
         context: List[str] = []
         period   = cfg.DAY_DURATION + cfg.NIGHT_DURATION
-        is_night = (self.real_time % period) >= cfg.DAY_DURATION
+        is_night = (self.sim_time % period) >= cfg.DAY_DURATION
 
         zone = zone_for_point(v.x, v.y)
         context.append(zone if zone else "wild")

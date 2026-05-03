@@ -19,6 +19,7 @@ Controls
 
 import math
 import sys
+from typing import TYPE_CHECKING
 
 import pygame
 
@@ -26,10 +27,31 @@ import config as cfg
 from simulation import World
 from renderer import Renderer
 
+if TYPE_CHECKING:
+    pass
+
+# ── slider state ──────────────────────────────────────────────────────────────
+
+_slider_dragging = False
+
+
+def _apply_slider_x(world: World, mx: int, slider: tuple) -> None:
+    xl, xr, _ = slider
+    frac = max(0.0, min(1.0, (mx - xl) / (xr - xl)))
+    world.speed = max(
+        cfg.SIM_SPEED_MIN,
+        min(cfg.SIM_SPEED_MAX, round(cfg.SIM_SPEED_MIN + frac * (cfg.SIM_SPEED_MAX - cfg.SIM_SPEED_MIN))),
+    )
+
+
+def _hit_slider(mx: int, my: int, slider: tuple) -> bool:
+    xl, xr, cy = slider
+    return (xl - 8) <= mx <= (xr + 8) and abs(my - cy) <= 10
+
 
 # ── event handling ────────────────────────────────────────────────────────────
 
-def handle_events(world: World) -> bool:
+def handle_events(world: World, renderer: Renderer) -> bool:
     """
     Process all pending pygame events.
 
@@ -37,6 +59,8 @@ def handle_events(world: World) -> bool:
     -------
     bool : False if the application should quit, True otherwise.
     """
+    global _slider_dragging
+
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             return False
@@ -61,8 +85,12 @@ def handle_events(world: World) -> bool:
 
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
-            # Only consider clicks in the game world (left of panel)
-            if mx < cfg.WINDOW_W - cfg.PANEL_WIDTH:
+            sl = renderer._slider
+            if sl and _hit_slider(mx, my, sl):
+                _slider_dragging = True
+                _apply_slider_x(world, mx, sl)
+            elif mx < cfg.WINDOW_W - cfg.PANEL_WIDTH:
+                # villager selection (world area only)
                 found = next(
                     (
                         v for v in world.alive()
@@ -71,6 +99,15 @@ def handle_events(world: World) -> bool:
                     None,
                 )
                 world.selected_uid = found.uid if found else None
+
+        elif event.type == pygame.MOUSEMOTION:
+            if _slider_dragging:
+                sl = renderer._slider
+                if sl:
+                    _apply_slider_x(world, event.pos[0], sl)
+
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            _slider_dragging = False
 
     return True
 
@@ -91,7 +128,7 @@ def main() -> None:
     while running:
         dt = clock.tick(cfg.FPS) / 1000.0   # real-time delta in seconds
 
-        running = handle_events(world)
+        running = handle_events(world, renderer)
         world.step(dt)
         renderer.draw(world)
         pygame.display.flip()

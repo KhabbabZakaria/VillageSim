@@ -257,6 +257,9 @@ class Renderer:
         self._bond_surf  = pygame.Surface((self.W, self.H), pygame.SRCALPHA)
         self._night_surf = pygame.Surface((self.px, self.H), pygame.SRCALPHA)
 
+        # speed slider geometry — set each frame in _draw_panel, read by main.py
+        self._slider: Optional[tuple] = None  # (xl, xr, cy)
+
         self._sprite_cache = {}
 
     WORLD_ICON_SIZE = 28  # tweak 24–40 depending on style
@@ -504,7 +507,7 @@ class Renderer:
         self._draw_bond_lines(world)
         for v in world.alive():
             self._draw_villager(v, world.selected_uid)
-        night_alpha = self._night_alpha(world.real_time)
+        night_alpha = self._night_alpha(world.sim_time)
         self._draw_night_overlay(night_alpha)
         self._draw_trolls(world, night_alpha)
         self._draw_day_night_indicator(night_alpha)
@@ -519,14 +522,10 @@ class Renderer:
 
     # ── day / night cycle ─────────────────────────────────────────────────────
 
-    def _night_alpha(self, real_time: float) -> float:
-        """
-        Returns darkness alpha 0–150 for the current moment.
-        Uses world.real_time so renderer and simulation stay in sync.
-        Cycle: DAY_DURATION day → NIGHT_FADE fade → NIGHT_DURATION night → repeat.
-        """
+    def _night_alpha(self, sim_time: float) -> float:
+        """Returns darkness alpha 0–150 for the current sim-time moment."""
         period = cfg.DAY_DURATION + cfg.NIGHT_DURATION
-        phase  = real_time % period
+        phase  = sim_time % period
         fade   = cfg.NIGHT_FADE
 
         if phase < cfg.DAY_DURATION - fade:             # full day
@@ -550,7 +549,7 @@ class Renderer:
         """Draw trolls only during the night portion of the cycle.
         Also draws a red aura on any villager being attacked."""
         period    = cfg.DAY_DURATION + cfg.NIGHT_DURATION
-        phase     = world.real_time % period
+        phase     = world.sim_time % period
         is_night  = phase >= cfg.DAY_DURATION
         if not is_night:
             return
@@ -862,6 +861,49 @@ class Renderer:
         # borders
         pygame.draw.line(self.screen, DIVIDER_BRIGHT, (px, 0), (px, H), 1)
         pygame.draw.line(self.screen, DIVIDER, (px + 1, 0), (px + 1, H), 1)
+
+        # ── speed slider (drawn in the panel's HUD strip, y 0–40) ─────────
+        sl_xl   = px + 86          # track left (leaves room for "SPEED ×N" label)
+        sl_xr   = self.W - 10      # track right
+        sl_tw   = sl_xr - sl_xl    # track width (≈ 254 px)
+        sl_cy   = HUD_H // 2       # track centre y  (= 20)
+        sl_h    = 6                # track height
+        sl_kr   = 7                # knob radius
+
+        spd_frac = (world.speed - cfg.SIM_SPEED_MIN) / (cfg.SIM_SPEED_MAX - cfg.SIM_SPEED_MIN)
+        sl_kx    = int(sl_xl + spd_frac * sl_tw)
+
+        # label: "SPEED × N"
+        lbl_s  = self.f_hud_sm.render(f"SPEED × {world.speed}", True, TEXT_SECONDARY)
+        self.screen.blit(lbl_s, (px + 8, sl_cy - lbl_s.get_height() // 2))
+
+        # track background + fill
+        pygame.draw.rect(self.screen, (45, 33, 14),
+                         (sl_xl, sl_cy - sl_h // 2, sl_tw, sl_h), border_radius=3)
+        if sl_kx > sl_xl:
+            pygame.draw.rect(self.screen, ACCENT_GOLD,
+                             (sl_xl, sl_cy - sl_h // 2, sl_kx - sl_xl, sl_h), border_radius=3)
+
+        # "Normal" tick at default speed
+        n_frac = (cfg.SIM_SPEED_DEFAULT - cfg.SIM_SPEED_MIN) / (cfg.SIM_SPEED_MAX - cfg.SIM_SPEED_MIN)
+        sl_nx  = int(sl_xl + n_frac * sl_tw)
+        pygame.draw.line(self.screen, TEXT_DIM,
+                         (sl_nx, sl_cy - sl_h // 2 - 3), (sl_nx, sl_cy + sl_h // 2 + 3), 1)
+
+        # knob
+        pygame.draw.circle(self.screen, ACCENT_WARM, (sl_kx, sl_cy), sl_kr)
+        pygame.draw.circle(self.screen, (18, 12, 5),  (sl_kx, sl_cy), sl_kr - 3)
+
+        # "Normal" caption below tick
+        nl_s   = self.f_hud_sm.render("Normal", True, TEXT_DIM)
+        nl_y   = sl_cy + sl_h // 2 + 3
+        self.screen.blit(nl_s, (sl_nx - nl_s.get_width() // 2, nl_y))
+
+        # store geometry for hit detection in main.py
+        self._slider = (sl_xl, sl_xr, sl_cy)
+
+        # separator between slider and panel content
+        _hline(self.screen, HUD_H - 1, px + 2, self.W - 2, DIVIDER)
 
         y = HUD_H + 8
 
