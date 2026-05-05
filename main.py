@@ -26,6 +26,7 @@ import pygame
 import config as cfg
 from simulation import World
 from renderer import Renderer
+from stats_logger import StatsLogger
 
 if TYPE_CHECKING:
     pass
@@ -123,6 +124,7 @@ def main() -> None:
 
     world    = World()
     renderer = Renderer(screen)
+    logger   = StatsLogger("stats_log.csv")
 
     running = True
     while running:
@@ -130,6 +132,7 @@ def main() -> None:
 
         running = handle_events(world, renderer)
         world.step(dt)
+        logger.update(world)
         renderer.draw(world)
         pygame.display.flip()
 
