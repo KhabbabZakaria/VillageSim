@@ -135,7 +135,11 @@ class ActorCritic:
         logits = self.W2a @ hidden + self.b2a
         logits -= logits.max()                                  # numerical stability
         exp    = np.exp(logits)
-        probs  = exp / exp.sum()
+        total  = exp.sum()
+        if total == 0 or not np.isfinite(total):
+            probs = np.ones(self.as_, dtype=np.float32) / self.as_
+        else:
+            probs = exp / total
 
         value = float((self.W2c @ hidden + self.b2c)[0])
         return probs, value, hidden
@@ -144,6 +148,9 @@ class ActorCritic:
 
     def sample_action(self, probs: np.ndarray) -> int:
         """Stochastic sampling — used during the *training* phase."""
+        if not np.isfinite(probs).all() or probs.sum() <= 0:
+            return int(np.random.randint(len(probs)))
+        probs = probs / probs.sum()   # renormalise in case of float drift
         return int(np.random.choice(len(probs), p=probs))
 
     def greedy_action(self, probs: np.ndarray) -> int:
@@ -186,25 +193,26 @@ class ActorCritic:
             probs, value, hidden = self.forward(s)
             _, next_value, _     = self.forward(ns)
 
-            # TD target and advantage
+            # TD target and advantage — clipped to prevent exploding gradients
             target    = r + (0.0 if done else self.gamma * next_value)
-            advantage = target - value
+            advantage = float(np.clip(target - value, -10.0, 10.0))
 
             # ── Critic update ──────────────────────────────────────────────
-            d_value = advantage                              # dL/d(value) = -advantage but we ascend
+            d_value = advantage
             self.W2c += self.lr * d_value * hidden[None, :]
             self.b2c += self.lr * d_value
 
             # ── Actor update ───────────────────────────────────────────────
-            d_logits        = probs.copy()
-            d_logits[a]    -= 1.0                           # cross-entropy gradient
-            actor_scale     = -self.lr * advantage * 0.5
+            d_logits     = probs.copy()
+            d_logits[a] -= 1.0                              # cross-entropy gradient
+            actor_scale  = -self.lr * advantage * 0.5
 
-            self.W2a += actor_scale * np.outer(d_logits, hidden)
-            self.b2a += actor_scale * d_logits
+            W2a_pre       = self.W2a.copy()                 # snapshot before update
+            self.W2a     += actor_scale * np.outer(d_logits, hidden)
+            self.b2a     += actor_scale * d_logits
 
-            # ── Hidden layer update ────────────────────────────────────────
-            d_hidden  = (actor_scale * (self.W2a.T @ d_logits))
+            # ── Hidden layer update — use pre-update W2a ───────────────────
+            d_hidden  = (actor_scale * (W2a_pre.T @ d_logits))
             d_hidden += (self.lr * d_value * self.W2c[0])
             d_hidden *= (hidden > 0).astype(np.float32)    # ReLU derivative
 
