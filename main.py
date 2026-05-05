@@ -25,6 +25,7 @@ import pygame
 import config as cfg
 from simulation import World
 from renderer import Renderer
+from logger import SimLogger
 
 
 # ── slider state ──────────────────────────────────────────────────────────────
@@ -119,6 +120,7 @@ def main() -> None:
 
     world    = World()
     renderer = Renderer(screen)
+    logger   = SimLogger()
 
     running = True
     while running:
@@ -126,9 +128,11 @@ def main() -> None:
 
         running = handle_events(world, renderer)
         world.step(dt)
+        logger.update(world)
         renderer.draw(world)
         pygame.display.flip()
 
+    logger.finalize(world)
     pygame.quit()
     sys.exit(0)
 
