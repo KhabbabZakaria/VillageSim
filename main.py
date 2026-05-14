@@ -122,6 +122,9 @@ def main() -> None:
     renderer = Renderer(screen)
     logger   = SimLogger()
 
+    MAX_GENERATIONS = 2000
+    MAX_SIM_TIME    = 300_000.0   # sim-seconds
+
     running = True
     while running:
         dt = clock.tick(cfg.FPS) / 1000.0   # real-time delta in seconds
@@ -131,6 +134,9 @@ def main() -> None:
         logger.update(world)
         renderer.draw(world)
         pygame.display.flip()
+
+        if world.generation >= MAX_GENERATIONS or world.sim_time >= MAX_SIM_TIME:
+            running = False
 
     logger.finalize(world)
     pygame.quit()
