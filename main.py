@@ -136,6 +136,13 @@ def main() -> None:
         renderer.draw(world)
         pygame.display.flip()
 
+        if world.generation >= 2000 or world.sim_time >= 300_000:
+            print(
+                f"Simulation ended — generation {world.generation}, "
+                f"sim_time {world.sim_time:.1f}s"
+            )
+            running = False
+
     pygame.quit()
     sys.exit(0)
 
