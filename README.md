@@ -27,13 +27,14 @@ Requires **Python 3.10+** and **pygame 2.6+**.
 
 ## Controls
 
-| Key | Action |
-|-----|--------|
+| Key / Input | Action |
+|-------------|--------|
 | `Space` | Pause / resume |
 | `R` | Full reset |
 | `+` / `=` | Increase simulation speed (up to 20×) |
 | `-` | Decrease simulation speed |
 | `Left click` | Select a villager — shows live policy tooltip |
+| `Drag speed slider` | Adjust simulation speed (right panel, top bar) |
 | `Esc` / `Q` | Quit |
 
 ---
@@ -45,11 +46,12 @@ The **left panel** is the simulated world. The **right panel** is a live dashboa
 - **Population** — alive villager count and generation number
 - **Deaths** — total deaths broken down by cause (Old Age, Starvation, Hunting, Troll Attack, Farming Exhaustion)
 - **Events log** — births, deaths, reproduction events, and coming-of-age
+- **Speed slider** — drag to adjust simulation speed from 1× to 20×; a tick marks the default speed
 
 Each villager displays:
 - A coloured dot (blue = male adult, pink = female adult, yellow = child)
 - A movement trail
-- A health/risk bar on hover
+- A health bar above the sprite
 - An emotion symbol for key life events
 
 ---
@@ -70,10 +72,22 @@ Villagers outside all zones wander the wild, slowly losing health with no benefi
 
 ### Day / Night Cycle
 
-- **Day** lasts 60 real-seconds, **Night** lasts 30 real-seconds.
-- A sun/moon indicator at the top-centre of the map tracks the cycle.
-- At night, a dark blue overlay fades in over the world.
-- **Trolls** emerge from their mountain homes 5 seconds into each night and return 5 seconds before dawn. Any villager caught outside the village takes **20 hp/s** of troll damage on top of normal drains.
+The cycle has four distinct phases. At default speed (4×), divide sim-seconds by 4 to get real-world seconds.
+
+| Phase | Duration | What happens |
+|-------|----------|--------------|
+| **Day** | 160 sim-s (≈40 real-s) | Full daylight; farming and hunting reward at full rate |
+| **Twilight** | 40 sim-s (≈10 real-s) | Transition day → night; danger ramps up; villagers outside the village re-evaluate their action immediately |
+| **Night** | 120 sim-s (≈30 real-s) | Full darkness; trolls active; rest reward peaks, hunt reward near zero |
+| **Dawn** | 40 sim-s (≈10 real-s) | Transition night → day; danger ramps down; trolls return home |
+
+A sun/moon indicator at the top-centre of the map tracks the cycle. At night, a dark blue overlay fades in over the world.
+
+**Trolls** emerge from their mountain homes 20 sim-seconds into each night and return 20 sim-seconds before dawn. Any villager caught outside the village takes **12 hp/s** of troll damage on top of normal drains.
+
+#### Action reset on phase transitions
+
+When **twilight** or **night** begins, every villager that is not inside the village has its action timer zeroed. This forces an immediate policy re-evaluation so agents react to rising danger and head home rather than finishing a long action committed to during full daylight.
 
 ### Hunger
 
@@ -106,6 +120,8 @@ Each villager owns one `ActorCritic` instance — a two-head neural network impl
 State (11 dims) → Hidden (24 neurons, ReLU) → Actor head  → softmax over 5 actions
                                              → Critic head → scalar state-value estimate
 ```
+
+**Numerical stability:** the softmax is guarded against zero or non-finite sums — if the exponential total collapses, the policy falls back to a uniform distribution. `sample_action` similarly validates probabilities before sampling.
 
 ### State Vector
 
@@ -160,15 +176,63 @@ When a villager dies, its **entire replay buffer** is donated to a shared specie
 
 ---
 
+## CSV Logging (`logger.py`)
+
+`SimLogger` automatically records simulation statistics to **`sim_log.csv`** at a fixed interval (every 100 sim-seconds, ≈25 real-seconds at default 4× speed). On quit, `finalize()` writes one final row capturing the end state.
+
+### Columns
+
+| Column | Description |
+|--------|-------------|
+| `sim_time_s` | Simulation time in seconds |
+| `real_time_s` | Wall-clock time in seconds |
+| `generation` | Current generation counter |
+| `population` | Alive villager count |
+| `males` | Alive adult males |
+| `females` | Alive adult females |
+| `children` | Alive children |
+| `total_born` | Cumulative births |
+| `total_deaths` | Cumulative deaths |
+| `deaths_old_age` | Deaths by old age |
+| `deaths_starvation` | Deaths by starvation |
+| `deaths_hunting` | Deaths by hunting mishap |
+| `deaths_troll` | Deaths by troll attack |
+| `deaths_farming` | Deaths by farming exhaustion |
+
+### Post-run analysis
+
+```python
+import pandas as pd
+df = pd.read_csv("sim_log.csv", comment="#")
+df.plot(x="sim_time_s", y="population")
+df.plot(x="sim_time_s", y=["deaths_troll", "deaths_starvation", "deaths_hunting"])
+```
+
+---
+
+## Auto-Stop / Run Limits
+
+Two hard limits are set in `main.py` to allow unattended runs:
+
+| Constant | Default | Effect |
+|----------|---------|--------|
+| `MAX_GENERATIONS` | 2000 | Stops the simulation after this many repopulation generations |
+| `MAX_SIM_TIME` | 300 000 sim-s | Stops the simulation after this much simulated time |
+
+When either limit is reached the simulation exits cleanly, calls `logger.finalize()` to flush the final CSV row, and closes the window. Adjust these values directly in `main.py` for longer or shorter batch runs.
+
+---
+
 ## Project Structure
 
 ```
 VillageSim/
-├── main.py          # Entry point, event loop, keyboard / mouse handling
+├── main.py          # Entry point, event loop, keyboard / mouse / slider handling
 ├── simulation.py    # Villager class, Troll class, World engine
 ├── drl.py           # ActorCritic network, ReplayBuffer, breed()
 ├── renderer.py      # All pygame rendering — world, villagers, trolls, UI panel
 ├── helpers.py       # Geometry utilities, particle system, world-surface builder
+├── logger.py        # SimLogger — writes sim_log.csv for post-run analysis
 ├── config.py        # Every tunable constant — tweak here, not in logic files
 ├── requirements.txt
 └── assets/          # Sprite icons (villagers, farm, troll, animals)
@@ -181,16 +245,21 @@ VillageSim/
 | Constant | Default | Effect |
 |----------|---------|--------|
 | `HUNT_RISK_BASE` | 7.0 | How fast hunting risk accumulates |
-| `TROLL_ATTACK_DRAIN` | 20.0 | HP/sec damage from trolls |
-| `HUNGER_THRESHOLD` | 120.0 | Sim-seconds before hunger kicks in |
+| `TROLL_ATTACK_DRAIN` | 12.0 | HP/sec damage from trolls |
+| `TROLL_EMERGE_DELAY` | 20.0 | Sim-seconds into night before trolls emerge |
+| `TROLL_RETURN_EARLY` | 20.0 | Sim-seconds before dawn that trolls go home |
+| `HUNGER_THRESHOLD` | 120.0 | Sim-seconds before hunger kicks in (~30 real-sec at 4×) |
 | `HUNGER_DRAIN` | 3.5 | HP/sec lost while hungry |
 | `AC_LEARNING_RATE` | 0.018 | Neural network update step size |
 | `AC_MUTATION_RATE` | 0.12 | Fraction of weights mutated in each child |
 | `AC_MUTATION_STD` | 0.08 | Noise magnitude per mutation |
 | `AC_INHERIT_SPECIES` | 30 | Species pool samples drawn at birth |
 | `MAX_VILLAGERS` | 20 | Hard cap on simultaneous population |
-| `DAY_DURATION` | 60.0 | Real-seconds of daylight per cycle |
-| `NIGHT_DURATION` | 30.0 | Real-seconds of night per cycle |
+| `DAY_DURATION` | 160.0 | Sim-seconds of daylight per cycle (≈40 real-s at 4×) |
+| `NIGHT_DURATION` | 120.0 | Sim-seconds of night per cycle (≈30 real-s at 4×) |
+| `TWILIGHT_DURATION` | 40.0 | Sim-seconds of twilight (day → night transition) |
+| `DAWN_DURATION` | 40.0 | Sim-seconds of dawn (night → day transition) |
+| `NIGHT_FADE` | 16.0 | Sim-seconds over which the darkness overlay fades in/out |
 | `SIM_SPEED_DEFAULT` | 4 | Sim-seconds per real-second at startup |
 
 ---
