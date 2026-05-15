@@ -117,8 +117,9 @@ class Villager:
         # ── RL phase ──────────────────────────────────────────────────────────
         self.train_phase  = True
         self.phase_timer  = 0.0
-        self.last_state:  Optional[np.ndarray] = None
-        self.last_action: int = 0
+        self.last_state:    Optional[np.ndarray] = None
+        self.last_action:   int   = 0
+        self.last_log_prob: float = 0.0
 
         # ── parenting ─────────────────────────────────────────────────────────
         self.parent_ids: List[int] = [parent_a.uid, parent_b.uid] if parent_a else []
@@ -238,7 +239,9 @@ class World:
         self.species_pool: ReplayBuffer = ReplayBuffer(cfg.AC_SPECIES_POOL_SIZE)
         # Trolls — immortal night creatures
         self.trolls: List[Troll] = []
-        self.real_time: float = 0.0
+        self.real_time: float    = 0.0
+        self._was_night:    bool = False
+        self._was_twilight: bool = False
         self.reset()
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
@@ -256,6 +259,8 @@ class World:
         self.selected_uid    = None
         self.species_pool    = ReplayBuffer(cfg.AC_SPECIES_POOL_SIZE)
         self.real_time       = 0.0
+        self._was_night      = False
+        self._was_twilight   = False
         self.trolls          = [Troll(x, y) for x, y in cfg.TROLL_HOMES]
         self.deaths_by_cause = {"old age": 0, "starvation": 0, "hunting mishap": 0, "troll attack": 0, "farming exhaustion": 0}
         cx, cy = cfg.ACTION_TARGETS[0]
@@ -290,6 +295,31 @@ class World:
             speed       = self.speed,
         )
 
+    # ── time helpers ──────────────────────────────────────────────────────────
+
+    def _time_of_day(self) -> str:
+        period = cfg.DAY_DURATION + cfg.NIGHT_DURATION
+        phase  = self.sim_time % period
+        if phase >= cfg.DAY_DURATION:
+            return "night"
+        elif phase >= cfg.DAY_DURATION - cfg.TWILIGHT_DURATION:
+            return "twilight"
+        elif phase < cfg.DAWN_DURATION:
+            return "dawn"
+        return "day"
+
+    def _night_danger(self) -> float:
+        """Continuous 0.0–1.0 danger: ramps up during twilight, down during dawn."""
+        period = cfg.DAY_DURATION + cfg.NIGHT_DURATION
+        phase  = self.sim_time % period
+        if phase >= cfg.DAY_DURATION:
+            return 1.0
+        elif phase >= cfg.DAY_DURATION - cfg.TWILIGHT_DURATION:
+            return (phase - (cfg.DAY_DURATION - cfg.TWILIGHT_DURATION)) / cfg.TWILIGHT_DURATION
+        elif phase < cfg.DAWN_DURATION:
+            return 1.0 - (phase / cfg.DAWN_DURATION)
+        return 0.0
+
     # ── main step ─────────────────────────────────────────────────────────────
 
     def step(self, dt: float) -> None:
@@ -306,6 +336,17 @@ class World:
             self._update_villager(v, dt, alive)
 
         self._update_trolls(dt, alive)
+
+        # Force re-evaluation at twilight start (head home warning) and night start
+        tod = self._time_of_day()
+        is_night_now    = tod == "night"
+        is_twilight_now = tod == "twilight"
+        if (is_night_now and not self._was_night) or (is_twilight_now and not self._was_twilight):
+            for v in alive:
+                if zone_for_point(v.x, v.y) != "village":
+                    v.action_timer = 0.0
+        self._was_night    = is_night_now
+        self._was_twilight = is_twilight_now
 
         # Repopulation guard — maintain at least one adult of each gender
         for gender in ("M", "F"):
@@ -402,8 +443,9 @@ class World:
             if parent:
                 v.health = min(100.0, v.health + dt * cfg.PARENT_FEED_RATE)
 
-        # Reproduction (male initiates proximity check)
-        if v.is_adult and v.gender == "M" and v.sex_cooldown <= 0:
+        # Reproduction (male initiates proximity check) — suppressed at population cap
+        if (v.is_adult and v.gender == "M" and v.sex_cooldown <= 0
+                and len(alive) < cfg.MAX_VILLAGERS):
             for f in alive:
                 if (f.is_adult and f.gender == "F"
                         and f.sex_cooldown <= 0
@@ -414,8 +456,8 @@ class World:
     # ── troll update ──────────────────────────────────────────────────────────
 
     def _update_trolls(self, dt: float, alive: List[Villager]) -> None:
-        period     = cfg.DAY_DURATION + cfg.NIGHT_DURATION   # 90 s
-        phase      = self.real_time % period
+        period     = cfg.DAY_DURATION + cfg.NIGHT_DURATION
+        phase      = self.sim_time % period
         out_start  = cfg.DAY_DURATION + cfg.TROLL_EMERGE_DELAY   # 65 s
         out_end    = period - cfg.TROLL_RETURN_EARLY              # 85 s
         is_out     = out_start <= phase < out_end
@@ -500,17 +542,18 @@ class World:
     def _apply_zone_effects(self, v: Villager, dt: float) -> None:
         zone      = zone_for_point(v.x, v.y)
         rwd, rsk  = v.action_rr(v.action)
-        period    = cfg.DAY_DURATION + cfg.NIGHT_DURATION
-        is_night  = (self.real_time % period) >= cfg.DAY_DURATION
+        danger    = self._night_danger()   # 0.0 = safe day, 1.0 = full night
         is_hungry = v.hunger_timer > cfg.HUNGER_THRESHOLD
 
         if zone == "crop":
             v.last_damage_source = "farming exhaustion"
             v.health = max(0.0, v.health - cfg.FARM_HEALTH_DRAIN * dt)
             v.risk   = max(0.0, v.risk   - dt * cfg.FARM_RISK_DRAIN)
-            # Eating while hungry is worth much more — teaches farm-when-hungry
-            hunger_mult = 3.0 if is_hungry else 1.0
-            v.instant_reward = rwd * 0.5 * hunger_mult
+            # Farm reward scales down as danger rises; hunger multiplier preserved
+            day_mult   = 3.0 if is_hungry else 1.0
+            night_mult = 0.35 if is_hungry else 0.08
+            mult = day_mult * (1.0 - danger) + night_mult * danger
+            v.instant_reward = rwd * 0.5 * mult
             v.hunger_eat_timer += dt
             if v.hunger_eat_timer >= cfg.HUNGER_EAT_DURATION:
                 v.hunger_timer     = 0.0
@@ -520,9 +563,8 @@ class World:
             v.last_damage_source = "hunting mishap"
             v.health = max(0.0, v.health - cfg.HUNT_HEALTH_DRAIN * dt)
             v.risk   = min(100.0, v.risk + rsk * dt)
-            # Hunt is low value and catastrophically bad at night (trolls)
-            night_penalty = 0.05 if is_night else 0.35
-            v.instant_reward = rwd * night_penalty
+            # Hunt reward scales down as danger rises
+            v.instant_reward = rwd * (0.35 * (1.0 - danger) + 0.05 * danger)
             v.hunger_eat_timer += dt
             if v.hunger_eat_timer >= cfg.HUNGER_EAT_DURATION:
                 v.hunger_timer     = 0.0
@@ -532,21 +574,25 @@ class World:
             if v.health > 0:
                 v.health = min(100.0, v.health + dt * cfg.VILLAGE_HEALTH_REGEN)
             v.risk   = max(0.0, v.risk - dt * cfg.REST_RISK_DRAIN)
-            # Village at night is safe haven — high reward; during day moderate
-            v.instant_reward = cfg.REST_REWARD * (1.2 if is_night else 0.4)
+            # Village reward rises with danger — strongest at full night
+            village_mult = 0.2 if is_hungry else 1.0
+            v.instant_reward = cfg.REST_REWARD * (0.4 + 3.1 * danger) * village_mult
             v.hunger_eat_timer = 0.0
 
         else:   # wild
             if v.health > 0:
                 v.health = min(100.0, v.health + dt * cfg.WILD_HEALTH_REGEN)
             v.risk   = max(0.0, v.risk - dt * 1.0)
-            # Being in the wild at night is dangerous — punish it
-            v.instant_reward = -0.8 if is_night else 0.05
+            v.instant_reward = 0.05 - 0.85 * danger
             v.hunger_eat_timer = 0.0
 
-        # Universal hunger penalty — agent feels being hungry regardless of zone
+        # Outside-village penalty scales with danger
+        if danger > 0 and zone != "village":
+            v.instant_reward -= 1.5 * danger
+
+        # Universal hunger penalty
         if is_hungry:
-            v.instant_reward -= 1.0
+            v.instant_reward -= (1.0 + 2.0 * danger)
 
         # Small survival bonus every tick — living longer is intrinsically rewarded
         v.instant_reward += 0.15
@@ -557,9 +603,7 @@ class World:
 
     def _decide_action(self, v: Villager, alive: List[Villager]) -> None:
         kids_near, mate_near = self._nearby_info(v, alive)
-        period   = cfg.DAY_DURATION + cfg.NIGHT_DURATION
-        is_night = 1.0 if (self.real_time % period) >= cfg.DAY_DURATION else 0.0
-        state = v.get_state(kids_near, mate_near, is_night)
+        state = v.get_state(kids_near, mate_near, self._night_danger())
 
         probs, _, _ = v.brain.forward(state)
         action = (
@@ -567,6 +611,7 @@ class World:
             if v.train_phase
             else v.brain.greedy_action(probs)
         )
+        log_prob = float(np.log(probs[action] + 1e-8))
         v.action = action
 
         tx, ty = cfg.ACTION_TARGETS[action]
@@ -576,10 +621,11 @@ class World:
         v.action_dur = random.uniform(cfg.ACTION_DUR_MIN, cfg.ACTION_DUR_MAX)
 
         if v.last_state is not None:
-            v.brain.store(v.last_state, v.last_action, v.instant_reward, state, False)
+            v.brain.store(v.last_state, v.last_action, v.instant_reward, state, False, v.last_log_prob)
 
-        v.last_state  = state
-        v.last_action = action
+        v.last_state    = state
+        v.last_action   = action
+        v.last_log_prob = log_prob
 
     def _nearby_info(
         self, v: Villager, alive: List[Villager]
@@ -662,7 +708,7 @@ class World:
                 cfg.PREMATURE_DEATH_PENALTY if reason != "old age"
                 else v.instant_reward
             )
-            v.brain.store(v.last_state, v.last_action, terminal_reward, v.last_state, True)
+            v.brain.store(v.last_state, v.last_action, terminal_reward, v.last_state, True, v.last_log_prob)
 
         # Donate the villager's entire lifetime experience to the species pool
         # so future generations can learn from it at birth

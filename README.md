@@ -1,4 +1,4 @@
-# VillageSim — Actor-Critic DRL Ecosystem
+# VillageSim — PPO Actor-Critic DRL Ecosystem
 
 A living village simulation where every villager is an independent **Actor-Critic reinforcement learning agent** built from scratch in pure NumPy. Villagers explore, learn, age, reproduce, and die. Children inherit neural weights and memories from both parents. Knowledge accumulates across generations through a shared **species memory pool**. Emergent behaviour arises purely from the RL policies — no rules, no scripted AI.
 
@@ -27,12 +27,13 @@ Requires **Python 3.10+** and **pygame 2.6+**.
 
 ## Controls
 
-| Key | Action |
-|-----|--------|
+| Key / Input | Action |
+|-------------|--------|
 | `Space` | Pause / resume |
 | `R` | Full reset |
 | `+` / `=` | Increase simulation speed (up to 20×) |
 | `-` | Decrease simulation speed |
+| Speed slider | Drag in the top-right panel to set speed directly |
 | `Left click` | Select a villager — shows live policy tooltip |
 | `Esc` / `Q` | Quit |
 
@@ -42,15 +43,17 @@ Requires **Python 3.10+** and **pygame 2.6+**.
 
 The **left panel** is the simulated world. The **right panel** is a live dashboard showing:
 
-- **Population** — alive villager count and generation number
+- **Census** — population breakdown (males, females, children), generation, total born/deaths
+- **Legend** — colour key for villager types and RL phase (training/testing)
+- **Actions** — colour key for the five possible actions
 - **Deaths** — total deaths broken down by cause (Old Age, Starvation, Hunting, Troll Attack, Farming Exhaustion)
 - **Events log** — births, deaths, reproduction events, and coming-of-age
 
-Each villager displays:
-- A coloured dot (blue = male adult, pink = female adult, yellow = child)
+Each villager is rendered as a **pixel-art sprite** (male/female adult or boy/girl) with:
 - A movement trail
-- A health/risk bar on hover
-- An emotion symbol for key life events
+- A health bar above their head (green → yellow → red)
+- An emotion symbol for key life events (♥ reproduction, ★ coming-of-age, ? wanderer arrival)
+- A live policy tooltip when selected (click to select)
 
 ---
 
@@ -60,25 +63,35 @@ Each villager displays:
 
 Five zones define the map:
 
-| Zone | Activity | Health | Risk |
-|------|----------|--------|------|
-| Village (centre) | Rest — regens health | +3.0 hp/s | None |
-| Farm West / East | Farming — feeds hunger | −0.1 hp/s | Low |
-| Hunt South / North | Hunting — high reward, high risk | −3.5 hp/s | High |
+| Zone | Activity | Zone Health Effect | Passive Drain | Risk |
+|------|----------|--------------------|---------------|------|
+| Village (centre) | Rest — regens health | +3.0 hp/s | −0.8 hp/s | None |
+| Farm West / East | Farming — feeds hunger | −0.1 hp/s | −0.8 hp/s | Low |
+| Hunt South / North | Hunting — high reward, high risk | −3.5 hp/s | −0.8 hp/s | High |
+| Wild (elsewhere) | Wandering — slight drain | +0.3 hp/s | −0.8 hp/s | None |
 
-Villagers outside all zones wander the wild, slowly losing health with no benefit.
+A universal passive drain of **0.8 hp/s** always applies on top of zone effects.
 
 ### Day / Night Cycle
 
-- **Day** lasts 60 real-seconds, **Night** lasts 30 real-seconds.
+One full cycle = **280 sim-seconds** (≈70 real-seconds at default 4× speed):
+
+| Phase | Sim-seconds | Real-seconds (4×) | Danger |
+|-------|-------------|-------------------|--------|
+| Dawn | 0 – 40 | ≈10 s | Fading 1→0 |
+| Day | 40 – 120 | ≈20 s | 0 (safe) |
+| Twilight | 120 – 160 | ≈10 s | Rising 0→1 |
+| Night | 160 – 280 | ≈30 s | 1 (full danger) |
+
 - A sun/moon indicator at the top-centre of the map tracks the cycle.
-- At night, a dark blue overlay fades in over the world.
-- **Trolls** emerge from their mountain homes 5 seconds into each night and return 5 seconds before dawn. Any villager caught outside the village takes **20 hp/s** of troll damage on top of normal drains.
+- At twilight/night, a dark blue overlay fades in over the world.
+- Villagers outside the village re-evaluate their action immediately when twilight starts.
+- **Trolls** emerge 20 sim-seconds (≈5 real-sec) into night and return 20 sim-seconds (≈5 real-sec) before dawn. Any villager caught outside the village takes **12 hp/s** of troll damage.
 
 ### Hunger
 
 - Villagers start getting hungry after **120 sim-seconds** without eating.
-- Eating requires spending at least 1 continuous sim-second inside a farm zone.
+- Eating requires spending at least 1 continuous sim-second inside a **farm or hunt zone**.
 - A hungry villager loses an additional **3.5 hp/s**. Even inside the village, prolonged starvation is lethal.
 - The RL reward for farming is **3× higher** when the villager is hungry, teaching agents to seek food proactively.
 
@@ -120,20 +133,25 @@ State (11 dims) → Hidden (24 neurons, ReLU) → Actor head  → softmax over 5
 | 6 | Potential mate nearby | Reproduction signal |
 | 7 | Sex cooldown active | Reproduction readiness |
 | 8 | `current_action / 4` | Inertia / momentum |
-| 9 | `hunger_frac` | Food urgency (0–1, clipped at 2×threshold) |
-| 10 | `is_night` | Day/night awareness for troll danger |
+| 9 | `hunger_frac` | Food urgency (0–1, clipped at 2× threshold) |
+| 10 | `is_night` | Day/night danger level (0.0 = safe, 1.0 = full night) |
 
 ### Actions
 
 | Index | Action | Zone | Reward shaping |
 |-------|--------|------|----------------|
-| 0 | Rest | Village | +1.2× at night, +0.4× during day |
-| 1 | Farm West | Crop W | 3× when hungry, baseline otherwise |
-| 2 | Farm East | Crop E | 3× when hungry, baseline otherwise |
+| 0 | Rest | Village | 0.4× at day, 3.5× at full night; ×0.2 when hungry |
+| 1 | Farm West | Crop W | 3× when hungry, 0.08× baseline; scales down as danger rises |
+| 2 | Farm East | Crop E | 3× when hungry, 0.08× baseline; scales down as danger rises |
 | 3 | Hunt South | Hunt S | 0.35× reward during day, 0.05× at night |
 | 4 | Hunt North | Hunt N | 0.35× reward during day, 0.05× at night |
 
-A universal **−1.0 hp/s penalty** is injected whenever hunger is active, and a **+0.15/s survival bonus** rewards staying alive. This pushes agents toward: *farm when hungry → rest in village at night → avoid hunting at night*.
+Additional reward shaping applied every tick:
+- **Hunger penalty** — `−(1.0 + 2.0 × danger)` per sim-second while hungry (−1.0 at day, up to −3.0 at full night)
+- **Outside-village danger penalty** — `−1.5 × danger` per sim-second when not in the village
+- **Survival bonus** — `+0.15` per sim-second for staying alive
+
+This pushes agents toward: *farm when hungry → rest in village at night → avoid hunting at night*.
 
 ### Training
 
@@ -141,9 +159,11 @@ Each villager alternates between phases:
 - **Training phase** (60 sim-sec) — stochastic policy, experiences stored in replay buffer
 - **Testing phase** (30 sim-sec) — greedy (argmax) policy, evaluates learned behaviour
 
-At each phase boundary, one **A2C gradient update** runs over a mini-batch of recent transitions:
-- **Critic loss** — mean-squared TD error
-- **Actor loss** — policy gradient scaled by advantage
+At each phase boundary, a **PPO (Proximal Policy Optimisation) gradient update** runs over a mini-batch of recent transitions for K epochs:
+- **Critic loss** — mean-squared TD error (coefficient `c1 = 0.5`)
+- **Actor loss** — clipped surrogate objective (ε = 0.2) to prevent destructive policy updates
+- **Entropy bonus** — encourages exploration (coefficient `c2 = 0.01`)
+- **K epochs** — 4 gradient passes per batch
 
 ### Knowledge Transfer
 
@@ -160,15 +180,36 @@ When a villager dies, its **entire replay buffer** is donated to a shared specie
 
 ---
 
+## Data Logging (`logger.py`)
+
+Every 100 sim-seconds (≈25 real-sec at 4×), the simulation appends a row to `sim_log.csv`:
+
+```
+sim_time_s, real_time_s, generation, population, males, females, children,
+total_born, total_deaths, deaths_old_age, deaths_starvation,
+deaths_hunting, deaths_troll, deaths_farming
+```
+
+Use this for post-run analysis:
+
+```python
+import pandas as pd
+df = pd.read_csv("sim_log.csv", comment="#")
+df.plot(x="sim_time_s", y="population")
+```
+
+---
+
 ## Project Structure
 
 ```
 VillageSim/
-├── main.py          # Entry point, event loop, keyboard / mouse handling
+├── main.py          # Entry point, event loop, keyboard / mouse / slider handling
 ├── simulation.py    # Villager class, Troll class, World engine
 ├── drl.py           # ActorCritic network, ReplayBuffer, breed()
-├── renderer.py      # All pygame rendering — world, villagers, trolls, UI panel
-├── helpers.py       # Geometry utilities, particle system, world-surface builder
+├── renderer.py      # All pygame rendering — world, sprites, trolls, UI panel
+├── helpers.py       # Geometry utilities, particle system, tree drawing
+├── logger.py        # CSV data logger for post-run analysis
 ├── config.py        # Every tunable constant — tweak here, not in logic files
 ├── requirements.txt
 └── assets/          # Sprite icons (villagers, farm, troll, animals)
@@ -181,16 +222,21 @@ VillageSim/
 | Constant | Default | Effect |
 |----------|---------|--------|
 | `HUNT_RISK_BASE` | 7.0 | How fast hunting risk accumulates |
-| `TROLL_ATTACK_DRAIN` | 20.0 | HP/sec damage from trolls |
-| `HUNGER_THRESHOLD` | 120.0 | Sim-seconds before hunger kicks in |
+| `TROLL_ATTACK_DRAIN` | 12.0 | HP/sec damage from trolls |
+| `TROLL_COUNT` | 5 | Number of trolls that emerge at night |
+| `HUNGER_THRESHOLD` | 120.0 | Sim-seconds before hunger kicks in (~30 real-sec at 4×) |
 | `HUNGER_DRAIN` | 3.5 | HP/sec lost while hungry |
 | `AC_LEARNING_RATE` | 0.018 | Neural network update step size |
 | `AC_MUTATION_RATE` | 0.12 | Fraction of weights mutated in each child |
 | `AC_MUTATION_STD` | 0.08 | Noise magnitude per mutation |
+| `AC_PPO_EPSILON` | 0.2 | PPO clip ratio ε |
+| `AC_PPO_K_EPOCHS` | 4 | Gradient passes per PPO update |
 | `AC_INHERIT_SPECIES` | 30 | Species pool samples drawn at birth |
 | `MAX_VILLAGERS` | 20 | Hard cap on simultaneous population |
-| `DAY_DURATION` | 60.0 | Real-seconds of daylight per cycle |
-| `NIGHT_DURATION` | 30.0 | Real-seconds of night per cycle |
+| `DAY_DURATION` | 160.0 | Sim-seconds of daylight per cycle (≈40 real-sec at 4×) |
+| `NIGHT_DURATION` | 120.0 | Sim-seconds of night per cycle (≈30 real-sec at 4×) |
+| `TWILIGHT_DURATION` | 40.0 | Sim-seconds of twilight/dusk transition (≈10 real-sec at 4×) |
+| `DAWN_DURATION` | 40.0 | Sim-seconds of dawn transition (≈10 real-sec at 4×) |
 | `SIM_SPEED_DEFAULT` | 4 | Sim-seconds per real-second at startup |
 
 ---

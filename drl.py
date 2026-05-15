@@ -51,9 +51,10 @@ class ReplayBuffer:
         reward: float,
         next_state: np.ndarray,
         done: bool,
+        log_prob: float = 0.0,
     ) -> None:
         self._buf.append(
-            dict(s=state, a=action, r=float(reward), ns=next_state, done=done)
+            dict(s=state, a=action, r=float(reward), ns=next_state, done=done, lp=float(log_prob))
         )
         if len(self._buf) > self.capacity:
             self._buf.pop(0)
@@ -159,14 +160,15 @@ class ActorCritic:
         reward: float,
         next_state: np.ndarray,
         done: bool = False,
+        log_prob: float = 0.0,
     ) -> None:
-        self.memory.push(state, action, reward, next_state, done)
+        self.memory.push(state, action, reward, next_state, done, log_prob)
 
     # ── training step ─────────────────────────────────────────────────────────
 
     def train(self) -> Optional[dict]:
         """
-        Run one A2C gradient update over a recent mini-batch.
+        Run PPO gradient updates over a recent mini-batch for K epochs.
 
         Returns a dict of training metrics (losses, mean advantage) or None
         if the buffer is too small.
@@ -176,44 +178,77 @@ class ActorCritic:
 
         batch = self.memory.sample(min(cfg.AC_BATCH_SIZE, len(self.memory)))
 
+        # Pre-compute advantages for normalisation (standard PPO practice)
+        raw_advs = []
+        for ex in batch:
+            _, v_s,  _ = self.forward(ex["s"])
+            _, v_ns, _ = self.forward(ex["ns"])
+            td = ex["r"] + (0.0 if ex["done"] else self.gamma * v_ns)
+            raw_advs.append(td - v_s)
+        adv_arr  = np.array(raw_advs, dtype=np.float32)
+        adv_mean = float(adv_arr.mean())
+        adv_std  = float(adv_arr.std()) + 1e-8
+
         total_actor_loss  = 0.0
         total_critic_loss = 0.0
         total_advantage   = 0.0
 
-        for ex in batch:
-            s, a, r, ns, done = ex["s"], ex["a"], ex["r"], ex["ns"], ex["done"]
+        for _ in range(cfg.AC_PPO_K_EPOCHS):
+            for ex in batch:
+                s, a, r, ns, done, old_lp = (
+                    ex["s"], ex["a"], ex["r"], ex["ns"], ex["done"], ex["lp"]
+                )
 
-            probs, value, hidden = self.forward(s)
-            _, next_value, _     = self.forward(ns)
+                probs, value, hidden = self.forward(s)
+                _, next_value, _     = self.forward(ns)
 
-            # TD target and advantage
-            target    = r + (0.0 if done else self.gamma * next_value)
-            advantage = target - value
+                # TD target and normalised advantage
+                target    = r + (0.0 if done else self.gamma * next_value)
+                advantage = (target - value - adv_mean) / adv_std
 
-            # ── Critic update ──────────────────────────────────────────────
-            d_value = advantage                              # dL/d(value) = -advantage but we ascend
-            self.W2c += self.lr * d_value * hidden[None, :]
-            self.b2c += self.lr * d_value
+                # ── PPO ratio (clamped to prevent exp overflow) ───────────
+                new_lp = float(np.log(probs[a] + 1e-8))
+                ratio  = float(np.clip(np.exp(new_lp - old_lp), 0.0, 10.0))
 
-            # ── Actor update ───────────────────────────────────────────────
-            d_logits        = probs.copy()
-            d_logits[a]    -= 1.0                           # cross-entropy gradient
-            actor_scale     = -self.lr * advantage * 0.5
+                # ── L_clip gradient w.r.t. logits (ascent direction) ──────
+                is_clipped = (
+                    ratio < 1 - cfg.AC_PPO_EPSILON
+                    or ratio > 1 + cfg.AC_PPO_EPSILON
+                )
+                if is_clipped:
+                    d_clip = np.zeros(self.as_, dtype=np.float32)
+                else:
+                    one_hot    = np.zeros(self.as_, dtype=np.float32)
+                    one_hot[a] = 1.0
+                    d_clip     = (ratio * advantage * (one_hot - probs)).astype(np.float32)
 
-            self.W2a += actor_scale * np.outer(d_logits, hidden)
-            self.b2a += actor_scale * d_logits
+                # ── Entropy gradient: π_i * (-log(π_i) - H) ──────────────
+                log_probs = np.log(probs + 1e-8)
+                H         = -float(np.sum(probs * log_probs))
+                d_entropy = (probs * (-log_probs - H)).astype(np.float32)
 
-            # ── Hidden layer update ────────────────────────────────────────
-            d_hidden  = (actor_scale * (self.W2a.T @ d_logits))
-            d_hidden += (self.lr * d_value * self.W2c[0])
-            d_hidden *= (hidden > 0).astype(np.float32)    # ReLU derivative
+                # Combined actor gradient (ascent on L_clip + c2*H)
+                d_actor = d_clip + cfg.AC_PPO_C2 * d_entropy
 
-            self.W1 += 0.008 * np.outer(d_hidden, s)
-            self.b1 += 0.008 * d_hidden
+                # ── Actor update ───────────────────────────────────────────
+                self.W2a += self.lr * np.outer(d_actor, hidden)
+                self.b2a += self.lr * d_actor
 
-            total_actor_loss  += float(np.log(probs[a] + 1e-8) * advantage)
-            total_critic_loss += float(advantage ** 2)
-            total_advantage   += float(advantage)
+                # ── Critic update (ascent on -c1 * advantage^2) ───────────
+                self.W2c += self.lr * cfg.AC_PPO_C1 * 2.0 * advantage * hidden[None, :]
+                self.b2c += self.lr * cfg.AC_PPO_C1 * 2.0 * advantage
+
+                # ── Hidden layer update ────────────────────────────────────
+                d_hidden  = self.W2a.T @ (self.lr * d_actor)
+                d_hidden += self.lr * cfg.AC_PPO_C1 * 2.0 * advantage * self.W2c[0]
+                d_hidden *= (hidden > 0).astype(np.float32)
+
+                self.W1 += 0.008 * np.outer(d_hidden, s)
+                self.b1 += 0.008 * d_hidden
+
+                total_actor_loss  += float(np.log(probs[a] + 1e-8) * advantage)
+                total_critic_loss += float(advantage ** 2)
+                total_advantage   += float(advantage)
 
         n = len(batch)
         return dict(

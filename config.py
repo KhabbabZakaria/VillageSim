@@ -43,12 +43,15 @@ PASSIVE_HEALTH_DRAIN = 0.8  # hp/second always draining (aging/hunger)
 FARM_HEALTH_DRAIN    = 0.1  # hp/second lost while farming (exertion)
 HUNT_HEALTH_DRAIN    = 3.5  # hp/second lost while hunting (danger + exertion)
 
-# ── Day / Night cycle (real-time seconds) ────────────────────────────────────
-DAY_DURATION        = 60.0   # real seconds of daylight
-NIGHT_DURATION      = 30.0   # real seconds of night
-NIGHT_FADE          =  4.0   # real seconds for fade at each transition
-TROLL_EMERGE_DELAY  =  5.0   # seconds into night before trolls come out
-TROLL_RETURN_EARLY  =  5.0   # seconds before dawn trolls go back home
+# ── Day / Night cycle (sim-seconds — scales with World.speed) ────────────────
+# At default speed (SIM_SPEED_DEFAULT=4) divide by 4 to get real-world seconds.
+DAY_DURATION        = 160.0  # sim-seconds of daylight    (≈40 real-s at 4×)
+NIGHT_DURATION      = 120.0  # sim-seconds of night       (≈30 real-s at 4×)
+TWILIGHT_DURATION   =  40.0  # sim-seconds of twilight    (≈10 real-s at 4×)
+DAWN_DURATION       =  40.0  # sim-seconds of dawn        (≈10 real-s at 4×)
+NIGHT_FADE          =  16.0  # sim-seconds fade per transition (≈4 real-s at 4×)
+TROLL_EMERGE_DELAY  =  20.0  # sim-seconds into night before trolls emerge
+TROLL_RETURN_EARLY  =  20.0  # sim-seconds before dawn trolls go home
 
 # ── Trolls ────────────────────────────────────────────────────────────────────
 TROLL_COUNT          = 5
@@ -94,6 +97,11 @@ AC_MUTATION_STD  = 0.08     # std of gaussian noise on mutated weights
 AC_INHERIT_MEM   = 20       # memories inherited from each parent
 AC_INHERIT_SPECIES   = 30   # memories drawn from species pool at birth
 AC_SPECIES_POOL_SIZE = 2000 # capacity of the collective species experience pool
+
+AC_PPO_EPSILON  = 0.2    # clip ratio ε
+AC_PPO_C1       = 0.5    # value loss coefficient
+AC_PPO_C2       = 0.01   # entropy bonus coefficient
+AC_PPO_K_EPOCHS = 4      # gradient passes per batch
 
 AC_TRAIN_DURATION = 60.0    # sim-seconds in training phase
 AC_TEST_DURATION  = 30.0    # sim-seconds in testing phase
